@@ -281,12 +281,16 @@ public:
             return false;
         }
 
-        if (color_enable)
+        if (color_enable) {
             pub_image[idx] = it.advertise("/camera/color" + to_string(idx) + "/image_raw", 1);
+            pub_cinfo[idx] = n.advertise<sensor_msgs::CameraInfo>("camera/color" + to_string(idx) + "/camera_info", 1);
+        }
         if (depth_enable)
             pub_depth[idx] = it.advertise("/camera/depth_registered" + to_string(idx) + "/image_raw", 1);
         if (pointcloud_enable)
             pub_points[idx] = n.advertise<sensor_msgs::PointCloud2>("/camera/depth_registered" + to_string(idx) + "/points", 1);
+        if (depth_enable || pointcloud_enable)
+            pub_dinfo[idx] = n.advertise<sensor_msgs::CameraInfo>("camera/depth_registered" + to_string(idx) + "/camera_info", 1);
 
         if (color_enable || depth_enable || pointcloud_enable)
             ros_enabled_devices[idx] = true;
@@ -313,17 +317,34 @@ public:
                         c_msg->width = c_width;
                         c_msg->height = c_height;
                         pub_image.at(idx).publish(c_msg);
+
+                        sensor_msgs::CameraInfo info_camera;
+                        info_camera.header.frame_id = "camera_color_frame";
+                        info_camera.header.stamp = current_time;
+                        info_camera.width = c_width;
+                        info_camera.height = c_height;
+                        pub_cinfo.at(idx).publish(info_camera);
                     }
-                    if (!depth.empty() && pub_depth.count(idx) != 0) {
-                        sensor_msgs::ImagePtr d_msg = cv_bridge::CvImage(std_msgs::Header(), "16UC1", depth).toImageMsg();
-                        d_msg->header.frame_id = "camera_depth_frame";
-                        d_msg->header.stamp = current_time;
-                        d_msg->width = c_width;
-                        d_msg->height = c_height;
-                        pub_depth.at(idx).publish(d_msg);
-                    }
-                    if (!depth.empty() && pub_points.count(idx) != 0) {
-                        ros_publish_points(idx, depth, current_time);
+                    if (!depth.empty()) {
+                        if (pub_depth.count(idx) != 0) {
+                            sensor_msgs::ImagePtr d_msg = cv_bridge::CvImage(std_msgs::Header(), "16UC1", depth).toImageMsg();
+                            d_msg->header.frame_id = "camera_depth_frame";
+                            d_msg->header.stamp = current_time;
+                            d_msg->width = c_width;
+                            d_msg->height = c_height;
+                            pub_depth.at(idx).publish(d_msg);
+                        }
+                        if (pub_points.count(idx) != 0) {
+                            ros_publish_points(idx, depth, current_time);
+                        }
+                        if (pub_depth.count(idx) != 0 || pub_points.count(idx) != 0) {
+                            sensor_msgs::CameraInfo info_camera;
+                            info_camera.header.frame_id = "camera_depth_frame";
+                            info_camera.header.stamp = current_time;
+                            info_camera.width = c_width;
+                            info_camera.height = c_height;
+                            pub_dinfo.at(idx).publish(info_camera);
+                        }
                     }
                 }
 
@@ -399,6 +420,8 @@ private:
     image_transport::ImageTransport it;
     std::map<int, image_transport::Publisher> pub_image;
     std::map<int, image_transport::Publisher> pub_depth;
+    std::map<int, ros::Publisher> pub_cinfo;
+    std::map<int, ros::Publisher> pub_dinfo;
     std::map<int, ros::Publisher> pub_points;
     std::map<int, bool> ros_enabled_devices;
 #endif
