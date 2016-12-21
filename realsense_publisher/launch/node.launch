@@ -1,4 +1,0 @@
-<launch>
-    <node name="realsense_publisher_node" pkg="realsense_publisher" type="realsense_publisher_node" output="screen">
-    </node>
-</launch>

@@ -104,11 +104,6 @@ public:
 
     cv::Mat map(int idx, cv::Mat &depth, float lower, float upper, float width, float dis);
 
-#ifdef ROS
-    bool ros_init(int idx, bool color_enable, bool depth_enable, bool pointcloud_enable);
-    void ros_publish();
-#endif
-
 private:
     class Impl;
     std::unique_ptr<Impl> impl;

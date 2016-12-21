@@ -6,15 +6,6 @@
 #include <opencv2/contrib/contrib.hpp>
 #endif
 #include <librealsense/rs.hpp>
-#ifdef ROS
-#include <ros/ros.h>
-#include <cv_bridge/cv_bridge.h>
-#include <sensor_msgs/Image.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <sensor_msgs/point_cloud2_iterator.h>
-#include <image_transport/image_transport.h>
-#include <map>
-#endif
 #include "RSWrapper.hpp"
 
 using namespace std;
@@ -23,10 +14,6 @@ class RSWrapper::Impl
 {
 public:
     Impl(int CImgSize, int DImgSize, int Cfps, int Dfps, int depth_preset)
-#ifdef ROS
-        : n(ros::NodeHandle()),
-          it(n)
-#endif
     {
         switch (CImgSize) {
         case 0:
@@ -271,160 +258,6 @@ private:
     int depth_preset;
     cv::Mat visual_dimg;
     const int min_depth = 300, max_depth = 4000;
-
-#ifdef ROS
-public:
-    bool ros_init(int idx, bool color_enable, bool depth_enable, bool pointcloud_enable)
-    {
-        if (idx >= static_cast<int>(devices.size()) || idx < 0) {
-            std::cerr << "RSWrapper: wrong device idx: " << idx << std::endl;
-            return false;
-        }
-
-        if (color_enable) {
-            pub_image[idx] = it.advertise("/camera/color" + to_string(idx) + "/image_raw", 1);
-            pub_cinfo[idx] = n.advertise<sensor_msgs::CameraInfo>("camera/color" + to_string(idx) + "/camera_info", 1);
-        }
-        if (depth_enable)
-            pub_depth[idx] = it.advertise("/camera/depth_registered" + to_string(idx) + "/image_raw", 1);
-        if (pointcloud_enable)
-            pub_points[idx] = n.advertise<sensor_msgs::PointCloud2>("/camera/depth_registered" + to_string(idx) + "/points", 1);
-        if (depth_enable || pointcloud_enable)
-            pub_dinfo[idx] = n.advertise<sensor_msgs::CameraInfo>("camera/depth_registered" + to_string(idx) + "/camera_info", 1);
-
-        if (color_enable || depth_enable || pointcloud_enable)
-            ros_enabled_devices[idx] = true;
-
-        return true;
-    }
-
-    void ros_publish()
-    {
-        cv::Mat color, depth;
-        try {
-            while (ros::ok()) {
-                ros::Time current_time = ros::Time::now();
-                for (auto iter : ros_enabled_devices) {
-                    auto idx = iter.first;
-                    auto dev = devices[idx];
-                    dev->wait_for_frames();
-                    color = get_frame_data(dev, rs::stream::rectified_color);
-                    depth = get_frame_data(dev, rs::stream::depth_aligned_to_rectified_color);
-                    if (!color.empty() && pub_image.count(idx) != 0) {
-                        sensor_msgs::ImagePtr c_msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", color).toImageMsg();
-                        c_msg->header.frame_id = "camera_color_frame";
-                        c_msg->header.stamp = current_time;
-                        c_msg->width = c_width;
-                        c_msg->height = c_height;
-                        pub_image.at(idx).publish(c_msg);
-
-                        sensor_msgs::CameraInfo info_camera;
-                        info_camera.header.frame_id = "camera_color_frame";
-                        info_camera.header.stamp = current_time;
-                        info_camera.width = c_width;
-                        info_camera.height = c_height;
-                        pub_cinfo.at(idx).publish(info_camera);
-                    }
-                    if (!depth.empty()) {
-                        if (pub_depth.count(idx) != 0) {
-                            sensor_msgs::ImagePtr d_msg = cv_bridge::CvImage(std_msgs::Header(), "16UC1", depth).toImageMsg();
-                            d_msg->header.frame_id = "camera_depth_frame";
-                            d_msg->header.stamp = current_time;
-                            d_msg->width = c_width;
-                            d_msg->height = c_height;
-                            pub_depth.at(idx).publish(d_msg);
-                        }
-                        if (pub_points.count(idx) != 0) {
-                            ros_publish_points(idx, depth, current_time);
-                        }
-                        if (pub_depth.count(idx) != 0 || pub_points.count(idx) != 0) {
-                            sensor_msgs::CameraInfo info_camera;
-                            info_camera.header.frame_id = "camera_depth_frame";
-                            info_camera.header.stamp = current_time;
-                            info_camera.width = c_width;
-                            info_camera.height = c_height;
-                            pub_dinfo.at(idx).publish(info_camera);
-                        }
-                    }
-                }
-
-                ros::spinOnce();
-            }
-        } catch (const rs::error &e) {
-            std::cerr << "librealsense error: " << e.get_failed_function() << ": " << e.what() << std::endl;
-            return;
-        } catch (const std::exception &e) {
-            std::cerr << e.what() << std::endl;
-            return;
-        }
-    }
-
-private:
-    void ros_publish_points(int idx, cv::Mat &depth, ros::Time &current_time)
-    {
-        sensor_msgs::PointCloud2 p_msg;
-        p_msg.width = c_width;
-        p_msg.height = c_height;
-        p_msg.header.frame_id = "camera_points_frame";
-        p_msg.header.stamp = current_time;
-        p_msg.is_dense = true;
-        sensor_msgs::PointCloud2Modifier modifier(p_msg);
-
-        modifier.setPointCloud2Fields(4, "x", 1,
-                                      sensor_msgs::PointField::FLOAT32, "y", 1,
-                                      sensor_msgs::PointField::FLOAT32, "z", 1,
-                                      sensor_msgs::PointField::FLOAT32, "rgb", 1,
-                                      sensor_msgs::PointField::FLOAT32);
-
-        modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
-
-        sensor_msgs::PointCloud2Iterator<float>iter_x(p_msg, "x");
-        sensor_msgs::PointCloud2Iterator<float>iter_y(p_msg, "y");
-        sensor_msgs::PointCloud2Iterator<float>iter_z(p_msg, "z");
-        sensor_msgs::PointCloud2Iterator<uint8_t>iter_r(p_msg, "r");
-        sensor_msgs::PointCloud2Iterator<uint8_t>iter_g(p_msg, "g");
-        sensor_msgs::PointCloud2Iterator<uint8_t>iter_b(p_msg, "b");
-
-        try {
-            const rs::intrinsics depth_intrin = devices[idx]->get_stream_intrinsics(rs::stream::depth_aligned_to_rectified_color);
-            auto scale = devices[idx]->get_depth_scale();
-            for (int y = 0; y < depth.rows; y++) {
-                for (int x = 0; x < depth.cols; x++) {
-                    auto p = depth_intrin.deproject({static_cast<float>(x), static_cast<float>(y)}, depth.at<uint16_t>(y, x) * scale);
-                    if (p.z <= (min_depth / 1000.0f) || p.z > (max_depth / 1000.0f)) {
-                      p.x = 0.0f;
-                      p.y = 0.0f;
-                      p.z = 0.0f;
-                    }
-
-                    *iter_x = p.x;
-                    *iter_y = p.y;
-                    *iter_z = p.z;
-                    *iter_r = 255;
-                    *iter_g = 255;
-                    *iter_b = 255;
-                    ++iter_x; ++iter_y; ++iter_z; ++iter_r; ++iter_g; ++iter_b;
-                }
-            }
-            pub_points.at(idx).publish(p_msg);
-        } catch (const rs::error &e) {
-            std::cerr << "librealsense error: " << e.get_failed_function() << ": " << e.what() << std::endl;
-            return;
-        } catch (const std::exception &e) {
-            std::cerr << e.what() << std::endl;
-            return;
-        }
-    }
-
-    ros::NodeHandle n;
-    image_transport::ImageTransport it;
-    std::map<int, image_transport::Publisher> pub_image;
-    std::map<int, image_transport::Publisher> pub_depth;
-    std::map<int, ros::Publisher> pub_cinfo;
-    std::map<int, ros::Publisher> pub_dinfo;
-    std::map<int, ros::Publisher> pub_points;
-    std::map<int, bool> ros_enabled_devices;
-#endif
 };
 
 RSWrapper::RSWrapper(int CImgSize, int DImgSize, int Cfps, int Dfps, int depth_preset)
@@ -471,16 +304,3 @@ cv::Mat RSWrapper::map(int idx, cv::Mat &depth, float lower, float upper, float 
     return impl->map(idx, depth, lower, upper, width, dis);
 }
 
-#ifdef ROS
-
-bool RSWrapper::ros_init(int idx, bool color_enable, bool depth_enable, bool pointcloud_enable)
-{
-    return impl->ros_init(idx, color_enable, depth_enable, pointcloud_enable);
-}
-
-void RSWrapper::ros_publish()
-{
-    impl->ros_publish();
-}
-
-#endif
